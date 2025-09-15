@@ -60,6 +60,22 @@ const ProductSchema = new mongoose.Schema({
   imageUrl: { type: String, required: true },
 });
 
+// A simplified schema for items within an order
+const OrderItemSchema = new mongoose.Schema({
+  product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+  name: { type: String, required: true },
+  quantity: { type: Number, required: true },
+  price: { type: Number, required: true },
+});
+
+const OrderSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  items: [OrderItemSchema],
+  totalPrice: { type: Number, required: true },
+  status: { type: String, default: 'Pending' },
+  createdAt: { type: Date, default: Date.now },
+});
+
 const UserSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
@@ -68,6 +84,7 @@ const UserSchema = new mongoose.Schema({
 
 const Product = mongoose.model('Product', ProductSchema);
 const User = mongoose.model('User', UserSchema);
+const Order = mongoose.model('Order', OrderSchema);
 
 // --- API Endpoints ---
 
@@ -183,6 +200,34 @@ app.post('/api/login', async (req, res) => {
         res.json({ token });
       }
     );
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// --- Order Routes ---
+app.post('/api/orders', auth, async (req, res) => {
+  const { cartItems, totalPrice } = req.body;
+  
+  if (cartItems.length === 0) {
+    return res.status(400).json({ msg: 'Cart is empty, cannot create order.' });
+  }
+
+  try {
+    const newOrder = new Order({
+      user: req.user.id,
+      items: cartItems.map(item => ({
+        product: item._id,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+      })),
+      totalPrice,
+    });
+    
+    const order = await newOrder.save();
+    res.status(201).json(order);
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server error');
