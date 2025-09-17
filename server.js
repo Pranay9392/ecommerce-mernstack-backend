@@ -71,7 +71,7 @@ const OrderSchema = new mongoose.Schema({
   razorpayOrderId: { type: String },
   items: [OrderItemSchema],
   totalPrice: { type: Number, required: true },
-  status: { type: String, default: 'Pending' }, // 'Pending', 'Processing', 'Delivered', 'Returned'
+  status: { type: String, default: 'Pending' }, // 'Pending', 'Processing', 'Delivered', 'Returned', 'Canceled'
   createdAt: { type: Date, default: Date.now },
 });
 
@@ -210,7 +210,6 @@ app.post('/api/orders/pay', auth, async (req, res) => {
 
     const razorpayOrder = await razorpay.orders.create(options);
 
-    // Save order in database with Razorpay order ID
     const newOrder = new Order({
       user: req.user.id,
       razorpayOrderId: razorpayOrder.id,
@@ -233,6 +232,42 @@ app.post('/api/orders/pay', auth, async (req, res) => {
   }
 });
 
+// Get a user's order history
+app.get('/api/orders/my-orders', auth, async (req, res) => {
+  try {
+    const orders = await Order.find({ user: req.user.id }).sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+// Cancel a user's order
+app.put('/api/orders/:id/cancel', auth, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ msg: 'Order not found' });
+
+    // Check if the order belongs to the authenticated user
+    if (order.user.toString() !== req.user.id) {
+      return res.status(401).json({ msg: 'Not authorized to cancel this order' });
+    }
+
+    // Only allow cancellation for 'Processing' or 'Pending' orders
+    if (order.status !== 'Processing' && order.status !== 'Pending') {
+      return res.status(400).json({ msg: 'Order cannot be canceled at this stage' });
+    }
+
+    order.status = 'Canceled';
+    await order.save();
+    res.json(order);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
 
 // --- Admin Panel Routes ---
 app.get('/api/admin/dashboard', auth, authAdmin, async (req, res) => {
@@ -244,14 +279,6 @@ app.get('/api/admin/dashboard', auth, authAdmin, async (req, res) => {
     const processingOrdersCount = await Order.countDocuments({ status: 'Processing' });
     const totalOrdersCount = await Order.countDocuments();
 
-    // Mock trend data
-    const last30DaysOrders = await Order.find({ createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } });
-    const dailyTrend = last30DaysOrders.reduce((acc, order) => {
-      const date = order.createdAt.toISOString().split('T')[0];
-      acc[date] = (acc[date] || 0) + 1;
-      return acc;
-    }, {});
-
     res.json({
       productCount,
       totalOrders: totalOrdersCount,
@@ -259,8 +286,19 @@ app.get('/api/admin/dashboard', auth, authAdmin, async (req, res) => {
       returnedOrders: returnedOrdersCount,
       pendingOrders: pendingOrdersCount,
       processingOrders: processingOrdersCount,
-      dailyOrderTrends: dailyTrend,
     });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+// Get all orders for admin view
+app.get('/api/admin/orders', auth, authAdmin, async (req, res) => {
+  try {
+    // Populate user and item details for a richer admin view
+    const orders = await Order.find().populate('user', 'name email').sort({ createdAt: -1 });
+    res.json(orders);
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
